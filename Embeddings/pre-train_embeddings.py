@@ -26,7 +26,7 @@ data = pd.read_csv(label_train_path)
 label_set = []
 for i in range(len(data)):
     label_set.append(data['LABELS'].iloc[i])
-label_set = [label.split(';') for label in label_set]
+label_set = [str(label).split(';') for label in label_set]
 
 ## Train Word2Vec
 print("Training label based word2vec:")
