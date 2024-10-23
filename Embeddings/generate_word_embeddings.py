@@ -63,8 +63,8 @@ print(f'Size of test sentence split:{tst_size}')
 ### Pickle final sentence splits:
 print("Pickling data:")
 with open (save_train_path, 'wb') as f:
-    pickle.dump(dev_split,f)
-with open (save_dev_path, 'wb') as f:
     pickle.dump(train_split,f)
+with open (save_dev_path, 'wb') as f:
+    pickle.dump(dev_split,f)
 with open (save_test_path, 'wb') as f:
     pickle.dump(test_split,f)

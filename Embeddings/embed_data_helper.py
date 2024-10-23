@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import random
 
 def get_word_index_wgts(model, padding_token, dim, padded_vector):
     word_to_index = {word: idx + 1 for idx, word in enumerate(model.wv.index_to_key)}
@@ -32,3 +33,28 @@ def get_word_inputs(df, word_to_index, max_len, padding_token, sent_len):
         split_notes.append(sentences)
     
     return split_notes
+
+
+def multilabel_ohe(data, codes):
+    num_codes = len(codes)
+    rows = []
+
+    for i in range(len(data)):
+        label = str(data['LABELS'].iloc[i]).split(';')
+        indices = [i for i, value in enumerate(codes) if value in label]
+        row = np.zeros(num_codes)
+        row[indices] = 1
+        rows.append(row)
+
+    return np.array(rows)
+
+def check_multilabel(data, ohe_data, codes, split):
+    rand_int = random.randint(0, len(data))
+    label = str(data['LABELS'].iloc[rand_int]).split(';')
+    indices = [i for i, value in enumerate(codes) if value in label]
+    row = ohe_data[rand_int]
+
+    if sum(row[indices]) != len(indices):
+        raise AssertionError("Binarize multi-label does not match for random sample")
+    else:
+        print(f'Passed random check for {split}')
