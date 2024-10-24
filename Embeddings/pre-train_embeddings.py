@@ -1,4 +1,4 @@
-## Python file to train the label (code) and word based embeddings for HLAN
+## Python file to train the label (code) and word based embeddings for HLAN with word2vec
 ### ICD-9 label sets from MIM-III used for training with splits from CAML-MIMIC-III
 
 ## Import libraries
@@ -8,16 +8,17 @@ import os
 
 ## Designate number of cores for works
 num_cores = os.cpu_count()
-print(num_cores)
+print(f'Number of cores for model pre-training: {num_cores - 1}')
 
 ## Designate file paths for the input data and output model
 ### Label
-label_train_path =  # path to MIMIC_3 train_full.csv
-label_model_path =  # path to save label embedding model
+#label_train_path = # path to MIMIC_3 train_full.csv
+label_train_path = # path to MIMIC_3 train_50.csv (reduce label space)
+label_model_path = # path to save label embedding model
 
 ### word
-word_train_path =  # path to MIMIC_3 disch_full.csv
-word_model_path =  # path to save word embedding model
+word_train_path = # path to MIMIC_3 disch_full.csv
+word_model_path = # path to save word embedding model
 
 ### Label Based embeddings ###
 data = pd.read_csv(label_train_path)
@@ -32,6 +33,9 @@ label_set = [str(label).split(';') for label in label_set]
 print("Training label based word2vec:")
 dim = 400
 model = Word2Vec(label_set, vector_size = dim, window = 5, min_count = 0, workers = num_cores - 1)
+
+if len(model.wv) != 50:
+    raise AssertionError('Error: Label set size is not 50')
 
 ## Save model:
 print("Saving label word2vec model at:",label_model_path)

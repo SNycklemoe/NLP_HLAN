@@ -32,7 +32,7 @@ def get_word_inputs(df, word_to_index, max_len, padding_token, sent_len):
 
         split_notes.append(sentences)
     
-    return split_notes
+    return torch.LongTensor(split_notes)
 
 
 def multilabel_ohe(data, codes):
@@ -46,7 +46,7 @@ def multilabel_ohe(data, codes):
         row[indices] = 1
         rows.append(row)
 
-    return np.array(rows)
+    return torch.LongTensor(np.array(rows))
 
 def check_multilabel(data, ohe_data, codes, split):
     rand_int = random.randint(0, len(data))
@@ -57,4 +57,4 @@ def check_multilabel(data, ohe_data, codes, split):
     if sum(row[indices]) != len(indices):
         raise AssertionError("Binarize multi-label does not match for random sample")
     else:
-        print(f'Passed random check for {split}')
+        print(f'Passed random check for {split} with rand_row:{rand_int}')

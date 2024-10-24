@@ -2,7 +2,7 @@ import pandas as pd
 from gensim.models import Word2Vec
 import numpy as np
 from embed_data_helper import *
-import pickle
+import torch
 
 ### Load in train and dev data for ICD top-50 and define file paths for model and save path for labels
 train_data_path = # path to MIMIC-III train_50.csv
@@ -11,9 +11,9 @@ test_data_path = # path to MIMIC-III test_50.csv
 
 code_model_path = # path to pre-trained label embedding model
 
-save_train_path = # path to saved train embedding file (pickle)
-save_dev_path = # path to saved dev embedding file (pickle)
-save_test_path = # path to saved test embedding file (pickle)
+save_train_path = # path to saved train embedding file (.pt)
+save_dev_path = # path to saved dev embedding file (.pt)
+save_test_path = # path to saved test embedding file (.pt)
 
 ### read in data and model
 print("Loading Data:")
@@ -35,9 +35,9 @@ dev_binarize = multilabel_ohe(dev_df, ICD_codes)
 test_binarize = multilabel_ohe(test_df, ICD_codes)
 
 ### Get final shape of outputs and print
-t_size = np.shape(train_binarize)
-d_size = np.shape(dev_binarize)
-tst_size = np.shape(test_binarize)
+t_size = train_binarize.shape
+d_size = dev_binarize.shape
+tst_size = test_binarize.shape
 
 print(f'Size of training sentence split:{t_size}')
 print(f'Size of dev sentence split:{d_size}')
@@ -48,12 +48,9 @@ check_multilabel(train_df, train_binarize, ICD_codes, split = "Train")
 check_multilabel(dev_df, dev_binarize, ICD_codes, split = "Dev")
 check_multilabel(test_df, test_binarize, ICD_codes, split = "Test")
 
-### Pickle encoded label sets for data splits:
-print("Pickling data:")
-with open (save_train_path, 'wb') as f:
-    pickle.dump(train_binarize,f)
-with open (save_dev_path, 'wb') as f:
-    pickle.dump(dev_binarize,f)
-with open (save_test_path, 'wb') as f:
-    pickle.dump(test_binarize,f)
+### Save encoded label sets for data splits:
+print("Saving tensor label splits:")
+torch.save(train_binarize, save_train_path)
+torch.save(dev_binarize, save_dev_path)
+torch.save(test_binarize, save_test_path)
 
