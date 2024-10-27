@@ -1,11 +1,93 @@
 import torch
+import torch.nn as nn
 import numpy as np
 
-
-
 class HLAN():
-    def __init__(self) -> None:
-        pass
+    def __init__(self, num_sent, word_weight_tensor, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True):
+        super(HLAN, self).__init__()
+        self.num_sent = num_sent
+        self.embed_dim = embed_dim
+        self.hidden_size = hidden_size
+        self.dropout_prob = dropout_prob
+
+        if freeze_embed == True:
+            self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor, freeze = True)
+        else:
+            self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor)
+
+        self.gru_w = nn.GRU(input_size = embed_dim, hidden_size = hidden_size, bidirectional=True, batch_first=True)
+        self.W_w = nn.Linear(hidden_size*2, hidden_size*2)
+        self.attn_tanh = nn.Tanh()
+        self.V_w_l = nn.Parameter(torch.randn(50, hidden_size*2))
+        self.word_softmax = nn.Softmax(dim = 2)
+
+        self.gru_s = nn.GRU(input_size = hidden_size * 2, hidden_size = hidden_size * 2, bidirectional = True, batch_first = True)
+        self.W_s = nn.Linear(hidden_size * 4, hidden_size * 2)
+        self.V_s_l = nn.Parameter(torch.randn(50, hidden_size *2))
+        self.drop_layer = nn.Dropout(p = dropout_prob)
+        self.sentence_softmax = nn.Softmax(dim =2)
+
+        if freeze_embed == True:
+            self.W_projection = nn.Parameter(code_weight_tensor, requires_grad = False)
+        
+        else:
+            self.W_projections = nn.Parameter(code_weight_tensor)
+
+        self.sigmoid_act = nn.Sigmoid()
+
+    def forward(self, batch):
+        embed_comp = self.embed_layer(batch)
+
+        embed_comp_reshape = embed_comp.view(-1, embed_comp.shape[2], embed_comp.shape[3])
+
+        C_s_l = self.word_attention(embed_comp_reshape)
+
+        doc_rep = self.sentence_attention(C_s_l)
+
+        logits = self.apply_final_layer(doc_rep)
+
+        probs = self.sigmoid_act(logits)
+
+        return probs
+
+    def word_attention(self, X):
+        hidden_state, hnn = self.gru_w(X)
+        hidden_state_reshape = hidden_state.reshape(-1,hidden_state.size(-1))
+        hidden_rep_step = self.attn_tanh(self.W_w(hidden_state_reshape))
+        v = hidden_rep_step.reshape(-1, hidden_state.size(1),hidden_state.size(-1))
+
+        a_w_l = torch.matmul(v,self.V_w_l.T).view(-1,v.size(0),v.size(1))
+        a_w_l = self.word_softmax(a_w_l).unsqueeze(3)
+        C_s_l = a_w_l*hidden_state
+        C_s_l = torch.sum(C_s_l,dim = 2)
+
+        return C_s_l
+
+    def sentence_attention(self, X):
+        X.reshape = X.permute(1, 0 , 2)
+        S_l, hnn = self.gru_s(X.reshape)
+
+        hidden_rep_step = self.attn_tanh(self.W_s(S_l)) 
+        U = hidden_rep_step.reshape(hidden_rep_step.size(1), -1, self.num_sent, hidden_rep_step.size(-1))
+
+        S_l_reshape = S_l.reshape(S_l.size(1), -1, self.num_sent, S_l.size(2))
+        V_s_l_expand = self.V_s_l.unsqueeze(1).unsqueeze(1)
+        attention_logits = (U * V_s_l_expand).sum(dim=3)
+        p_attention_sent = self.sentence_softmax(attention_logits - attention_logits.max(dim=2, keepdim=True).values)
+        document_representation = (p_attention_sent.unsqueeze(3) * S_l_reshape).sum(dim=2)
+        
+        return document_representation
+
+    def apply_final_layer(self, doc_rep):
+        drop_step = self.drop_layer(doc_rep) 
+        drop_step_reshape = drop_step.permute(1,2,0)
+        logits = drop_step_reshape * self.W_projection.T
+        logits = logits.sum(dim = 1)
+
+        return logits
+    
+
+
     def gru_single_step_word_level(self, Xt, h_t_minus_1):
         """
         single step of gru for word level

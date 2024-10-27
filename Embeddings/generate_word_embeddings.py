@@ -16,6 +16,7 @@ word_model_path = # path to pre-trained word embedding model
 save_train_path = # path to saved train embedding file (pt)
 save_dev_path = # path to saved dev embedding file (pt)
 save_test_path = # path to saved test embedding file (pt)
+save_model_weight_path = # path to saved model weights (.pt)
 
 print("Loading data:")
 train_df = pd.read_csv(train_data_path)
@@ -64,3 +65,4 @@ print("Saving tensor sentence splits:")
 torch.save(train_split, save_train_path)
 torch.save(dev_split, save_dev_path)
 torch.save(test_split, save_test_path)
+torch.save(wgt_tensor, save_model_weight_path)
