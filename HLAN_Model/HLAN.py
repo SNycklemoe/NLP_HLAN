@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-class HLAN():
+class HLAN(nn.Module):
     def __init__(self, num_sent, word_weight_tensor, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True):
         super(HLAN, self).__init__()
         self.num_sent = num_sent
