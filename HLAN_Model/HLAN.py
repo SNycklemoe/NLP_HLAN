@@ -65,8 +65,8 @@ class HLAN(nn.Module):
         return C_s_l
 
     def sentence_attention(self, X):
-        X.reshape = X.permute(1, 0 , 2)
-        S_l, hnn = self.gru_s(X.reshape)
+        X_reshape = X.tranpose(0, 1)
+        S_l, hnn = self.gru_s(X_reshape)
 
         hidden_rep_step = self.attn_tanh(self.W_s(S_l)) 
         U = hidden_rep_step.reshape(hidden_rep_step.size(1), -1, self.num_sent, hidden_rep_step.size(-1))
