@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+# import torch.nn.functional as F
 
 class HLAN(nn.Module):
     def __init__(self, num_sent, word_weight_tensor, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True):
@@ -300,13 +301,501 @@ class HLAN(nn.Module):
         h_t_forward_list.reverse() #ADD 2017.06.14
         return h_t_forward_list  # a list,length is num_sentences, each element is [num_classes,batch_size,hidden_size*2]
 
+    # loss for single-label classification 
+    def loss(self, outputs, targets, l2_lambda=0.0001):
+        """
+        # input: outputs=`logits`:[batch_size, num_classes], and targets=`labels`:[batch_size]
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        """
+        # Initialize the cross-entropy loss function
+        criterion = nn.CrossEntropyLoss()
+        
+        # Compute cross-entropy loss
+        loss = criterion(outputs, targets)
+        
+        # L2 regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Combine cross-entropy loss with L2 regularization
+        total_loss = loss + l2_losses
+        return total_loss
 
+    def loss_multilabel(self, outputs, targets, l2_lambda=0.0001):
+        """
+        # input: outputs=`logits` and targets=`labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize the binary cross-entropy loss with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')  # Avoid reduction to handle batch sum
+        
+        # Compute the sigmoid cross-entropy loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes per sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
 
+        # L2 regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Define sim_loss and sub_loss as 0 constants
+        sim_loss = torch.tensor(0.0, dtype=torch.float32, device=outputs.device)
+        sub_loss = torch.tensor(0.0, dtype=torch.float32, device=outputs.device)
 
+        # Combine BCE loss, L2 regularization, and additional terms
+        total_loss = loss_ce + l2_losses + sim_loss + sub_loss
+        return total_loss
 
+    # L_sim new: j,k per doc, \sum_d \sum_{j,k \in y_d} Sim_jk|R(S_dj)-R(S_dk)|
+    def loss_multilabel_onto_new_sim_pair_diff_abs(self, outputs, targets, label_sim_matrix, l2_lambda=0.0001, lambda_sim=1.0):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute the BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes per sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
 
+        # L2 regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Sigmoid output for similarity-based calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+        sim_loss = 0
 
+        # Loop over each instance in the batch
+        for i in range(sig_output.size(0)):  # sig_output.size(0) is the batch size
+            logit_vector = sig_output[i].unsqueeze(0)    # shape: [1, num_classes]
+            label_vector = targets[i]                    # true labels for this sample
+            
+            # Indices of true labels for the current sample
+            label_index = torch.nonzero(label_vector, as_tuple=False).squeeze(1)
+            if len(label_index) < 2:
+                continue  # Skip if there are fewer than 2 true labels for this sample
+            
+            # Gather predicted values for true labels
+            s_d_true = logit_vector[:, label_index]      # shape: [1, num_true_labels]
+            
+            # Calculate |R(S_dj) - R(S_dk)|
+            pred_d_true = torch.round(s_d_true)
+            pair_diff_abs_d = torch.abs(pred_d_true.T - pred_d_true)  # shape: [num_true_labels, num_true_labels]
+            
+            # Similarity matrix for the true labels
+            A, B = torch.meshgrid(label_index, label_index, indexing='ij')
+            ind_squ = torch.stack((A.flatten(), B.flatten()), dim=1)
+            label_sim_matrix_d = label_sim_matrix[ind_squ[:, 0], ind_squ[:, 1]].reshape(len(label_index), len(label_index))
+            
+            # Calculate similarity-weighted absolute differences
+            sim_loss += torch.sum(label_sim_matrix_d * pair_diff_abs_d)
+        
+        # Normalize sim_loss over batch and scale
+        sim_loss = (sim_loss / outputs.size(0)) * lambda_sim / 2.0
+        
+        # Combine all loss components
+        total_loss = loss_ce + l2_losses + sim_loss
+        return total_loss
 
+    # L_sim only: j,k per batch
+    def loss_multilabel_onto_new_sim_per_batch(self, outputs, targets, label_sim_matrix, l2_lambda=0.0001, lambda_sim=1.0):
+        """
+         # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
 
+        # L2 Regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Co-occurrence matrix for labels across the batch
+        co_label_mat_batch = torch.mm(targets.T, targets)   # Shape: [num_classes, num_classes]
+        co_label_mat_batch = (co_label_mat_batch > 0).float()  # Binary co-occurrence (sign)
+        
+        # Filter label similarity matrix by co-occurrence matrix
+        label_sim_matrix_filtered = label_sim_matrix * co_label_mat_batch  # Shape: [num_classes, num_classes]
 
+        # Sigmoid output for similarity-based calculations
+        sig_output = torch.sigmoid(outputs)  # Shape: [batch_size, num_classes]
+        
+        # Compute (s_dj)^2 for each label across the batch and sum over all documents
+        vec_square = torch.sum(sig_output ** 2, dim=0)  # Shape: [num_classes]
+        
+        # Compute pairwise differences |s_dj - s_dk|^2
+        vec_mid = torch.mm(sig_output.T, sig_output)      # Shape: [num_classes, num_classes]
+        vec_rows = vec_square.view(-1, 1).repeat(1, vec_square.size(0))  # Shape: [num_classes, num_classes]
+        vec_columns = vec_rows.T
+        vec_diff = vec_rows - 2 * vec_mid + vec_columns  # (li - lj)^2 for each pair (i, j)
+        
+        # Apply similarity weighting
+        vec_diff = vec_diff * label_sim_matrix_filtered  # Shape: [num_classes, num_classes]
+        vec_final = torch.sum(vec_diff) / 2              # Sum over all pairs, divide by 2 due to symmetry
+        
+        # Compute final similarity loss, normalized by batch size
+        sim_loss = (vec_final / outputs.size(0)) * lambda_sim
 
+        # Combine losses
+        total_loss = loss_ce + l2_losses + sim_loss
+        return total_loss
+
+    # sim-loss only: j,k per document
+    def loss_multilabel_onto_new_sim_per_doc(self, outputs, targets, label_sim_matrix, l2_lambda=0.0001, lambda_sim=1.0, dynamic_sem_l2=False):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute the BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        if dynamic_sem_l2:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+            )
+        else:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name and 'label_sim_mat' not in name
+            )
+
+        # Sigmoid output for similarity-based calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+        sim_loss = 0
+
+        # Loop over each instance in the batch for per-document similarity loss
+        for i in range(sig_output.size(0)):  # sig_output.size(0) is the batch size
+            logit_vector = sig_output[i]          # s_d, shape [num_classes]
+            label_vector = targets[i]             # y_d, shape [num_classes]
+            
+            # Get indices of true labels for this sample
+            label_index = torch.nonzero(label_vector, as_tuple=False).squeeze(1)
+            if len(label_index) < 2:
+                continue  # Skip if there are fewer than 2 true labels for this sample
+            
+            # Gather predicted values for true labels
+            s_d_true = logit_vector[label_index]  # shape: [num_true_labels]
+            
+            # Calculate pairwise squared differences |s_dj - s_dk|^2
+            pair_diff_squared_d = (s_d_true.unsqueeze(1) - s_d_true).pow(2)  # shape: [num_true_labels, num_true_labels]
+            
+            # Gather corresponding similarity values from the label similarity matrix
+            A, B = torch.meshgrid(label_index, label_index, indexing='ij')
+            label_sim_matrix_d = label_sim_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            
+            # Accumulate the weighted squared differences
+            sim_loss += torch.sum(label_sim_matrix_d * pair_diff_squared_d)
+        
+        # Normalize the similarity loss over batch and apply lambda scaling
+        sim_loss = (sim_loss / outputs.size(0)) * lambda_sim / 2.0
+
+        # Combine BCE loss, L2 regularization, and similarity loss
+        total_loss = loss_ce + l2_losses + sim_loss
+        return total_loss
+
+    # L_sim and L_sub - per doc - L_sim as lambda_sim*|R(S_dj)-R(S_dk)|
+    # label_sub_matrix: sub(T_j,T_k) \in {0,1} means whether T_j is a hyponym of T_k.
+    def loss_multilabel_onto_new_simsub_pair_diff_abs(self, outputs, targets, label_sim_matrix, label_sub_matrix, l2_lambda=0.0001, lambda_sim=1.0, lambda_sub=1.0):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Sigmoid output for similarity and substitution calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+        sim_loss = 0
+        sub_loss = 0
+
+        # Loop over each instance in the batch for per-document similarity and substitution loss
+        for i in range(sig_output.size(0)):  # sig_output.size(0) is the batch size
+            logit_vector = sig_output[i]           # s_d, shape [num_classes]
+            label_vector = targets[i]              # y_d, shape [num_classes]
+            
+            # Get indices of true labels for this sample
+            label_index = torch.nonzero(label_vector, as_tuple=False).squeeze(1)
+            if len(label_index) < 2:
+                continue  # Skip if there are fewer than 2 true labels for this sample
+            
+            # Gather predicted values for true labels
+            s_d_true = logit_vector[label_index]   # shape: [num_true_labels]
+            
+            # Calculate |R(S_dj) - R(S_dk)| and R(s_dj) * (1 - R(s_dk))
+            pred_d_true = torch.round(s_d_true)
+            pair_diff_abs_d = torch.abs(pred_d_true.unsqueeze(1) - pred_d_true)  # shape: [num_true_labels, num_true_labels]
+            pair_sub_d = torch.matmul(pred_d_true.view(-1, 1), (1 - pred_d_true).view(1, -1))  # shape: [num_true_labels, num_true_labels]
+
+            # Gather corresponding similarity and substitution values from the matrices
+            A, B = torch.meshgrid(label_index, label_index, indexing='ij')
+            label_sim_matrix_d = label_sim_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            label_sub_matrix_d = label_sub_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            
+            # Accumulate the weighted absolute differences for sim_loss and weighted values for sub_loss
+            sim_loss += torch.sum(label_sim_matrix_d * pair_diff_abs_d)
+            sub_loss += torch.sum(label_sub_matrix_d * pair_sub_d)
+        
+        # Normalize similarity and substitution losses over batch and apply lambda scaling
+        sim_loss = (sim_loss / outputs.size(0)) * lambda_sim / 2.0
+        sub_loss = (sub_loss / outputs.size(0)) * lambda_sub / 2.0
+
+        # Combine BCE loss, L2 regularization, similarity loss, and substitution loss
+        total_loss = loss_ce + l2_losses + sim_loss + sub_loss
+        return total_loss
+
+    # L_sim and L_sub - per doc
+    # label_sub_matrix: sub(T_j,T_k) \in {0,1} means whether T_j is a hyponym of T_k.
+    def loss_multilabel_onto_new_simsub_per_doc(self, outputs, targets, label_sim_matrix, label_sub_matrix, l2_lambda=0.0001, lambda_sim=1.0, lambda_sub=1.0, dynamic_sem_l2=False):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        if dynamic_sem_l2:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+            )
+        else:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name and 'label_sim_mat' not in name and 'label_sub_mat' not in name
+            )
+        
+        # Sigmoid output for similarity and substitution calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+        sim_loss = 0
+        sub_loss = 0
+
+        # Loop over each instance in the batch for per-document similarity and substitution loss
+        for i in range(sig_output.size(0)):  # sig_output.size(0) is the batch size
+            logit_vector = sig_output[i]           # s_d, shape [num_classes]
+            label_vector = targets[i]              # y_d, shape [num_classes]
+            
+            # Get indices of true labels for this sample
+            label_index = torch.nonzero(label_vector, as_tuple=False).squeeze(1)
+            if len(label_index) < 2:
+                continue  # Skip if there are fewer than 2 true labels for this sample
+            
+            # Gather predicted values for true labels
+            s_d_true = logit_vector[label_index]   # shape: [num_true_labels]
+            
+            # Calculate |s_dj - s_dk|^2 and R(s_dj) * (1 - R(s_dk))
+            pair_diff_squared_d = (s_d_true.unsqueeze(1) - s_d_true).pow(2)  # shape: [num_true_labels, num_true_labels]
+            pred_d_true = torch.round(s_d_true)
+            pair_sub_d = torch.matmul(pred_d_true.view(-1, 1), (1 - pred_d_true).view(1, -1))  # shape: [num_true_labels, num_true_labels]
+
+            # Gather corresponding similarity and substitution values from the matrices
+            A, B = torch.meshgrid(label_index, label_index, indexing='ij')
+            label_sim_matrix_d = label_sim_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            label_sub_matrix_d = label_sub_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            
+            # Accumulate the weighted squared differences for sim_loss and weighted values for sub_loss
+            sim_loss += torch.sum(label_sim_matrix_d * pair_diff_squared_d)
+            sub_loss += torch.sum(label_sub_matrix_d * pair_sub_d)
+        
+        # Normalize similarity and substitution losses over batch and apply lambda scaling
+        sim_loss = (sim_loss / outputs.size(0)) * lambda_sim / 2.0
+        sub_loss = (sub_loss / outputs.size(0)) * lambda_sub / 2.0
+
+        # Combine BCE loss, L2 regularization, similarity loss, and substitution loss
+        total_loss = loss_ce + l2_losses + sim_loss + sub_loss
+        return total_loss
+
+    # L_sim and L_sub - per batch, used in the NAACL paper
+    # label_sub_matrix: sub(T_j,T_k) \in {0,1} means whether T_j is a hypernym of T_k.
+    def loss_multilabel_onto_new_simsub_per_batch(self, outputs, targets, label_sim_matrix, label_sub_matrix, l2_lambda=0.0001, lambda_sim=1.0, lambda_sub=1.0):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Co-occurrence matrix for labels across the batch
+        co_label_mat_batch = torch.mm(targets.T, targets)   # Shape: [num_classes, num_classes]
+        co_label_mat_batch = (co_label_mat_batch > 0).float()  # Binary co-occurrence (sign)
+        
+        # Apply co-occurrence filter to the similarity and substitution matrices
+        label_sim_matrix_filtered = label_sim_matrix * co_label_mat_batch
+        label_sub_matrix_filtered = label_sub_matrix * co_label_mat_batch
+
+        # Sigmoid output for similarity and substitution calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+
+        # Similarity loss: calculate pairwise squared differences and weight by similarity matrix
+        vec_square = torch.sum(sig_output ** 2, dim=0)            # shape: [num_classes]
+        vec_mid = torch.mm(sig_output.T, sig_output)              # shape: [num_classes, num_classes]
+        vec_rows = vec_square.view(-1, 1).repeat(1, vec_square.size(0))  # shape: [num_classes, num_classes]
+        vec_columns = vec_rows.T
+        vec_diff = vec_rows - 2 * vec_mid + vec_columns           # (li - lj)^2 for each pair (i, j)
+        vec_diff = vec_diff * label_sim_matrix_filtered           # Weight differences by similarity matrix
+        sim_loss = torch.sum(vec_diff) / 2                        # Symmetric matrix, so divide by 2
+        sim_loss = (sim_loss / outputs.size(0)) * lambda_sim      # Normalize by batch size and scale
+
+        # Substitution loss: R(s_dj) * (1 - R(s_dk)) weighted by substitution matrix
+        pred = torch.round(sig_output)
+        pred_mat = torch.mm(pred.T, (1 - pred))                   # shape: [num_classes, num_classes]
+        sub_loss = pred_mat * label_sub_matrix_filtered           # Weight by substitution matrix
+        sub_loss = lambda_sub * torch.sum(sub_loss) / (2 * outputs.size(0))  # Normalize and scale
+
+        # Combine BCE loss, L2 regularization, similarity loss, and substitution loss
+        total_loss = loss_ce + l2_losses + sim_loss + sub_loss
+        return total_loss
+
+    # L_sub only - per batch - used in the NAACL paper
+    def loss_multilabel_onto_new_sub_per_batch(self, outputs, targets, label_sub_matrix, l2_lambda=0.0001, lambda_sub=1.0):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        l2_losses = l2_lambda * sum(
+            torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+        )
+        
+        # Co-occurrence matrix for labels across the batch
+        co_label_mat_batch = torch.mm(targets.T, targets)  # Shape: [num_classes, num_classes]
+        co_label_mat_batch = (co_label_mat_batch > 0).float()  # Binary co-occurrence (sign)
+        
+        # Apply co-occurrence filter to the substitution matrix
+        label_sub_matrix_filtered = label_sub_matrix * co_label_mat_batch
+
+        # Substitution loss: R(s_dj) * (1 - R(s_dk)) weighted by substitution matrix
+        sig_output = torch.sigmoid(outputs)  # Sigmoid output for probability values
+        pred = torch.round(sig_output)       # Binary prediction after sigmoid
+        pred_mat = torch.mm(pred.T, (1 - pred))  # Matrix of R(s_dj) * (1 - R(s_dk))
+        sub_loss = pred_mat * label_sub_matrix_filtered  # Apply substitution matrix weights
+        sub_loss = lambda_sub * torch.sum(sub_loss) / (2 * outputs.size(0))  # Normalize and scale
+
+        # Combine BCE loss, L2 regularization, and substitution loss
+        total_loss = loss_ce + l2_losses + sub_loss
+        return total_loss
+
+    # L_sub only - per document
+    def loss_multilabel_onto_new_sub_per_doc(self, outputs, targets, label_sub_matrix, l2_lambda=0.0001, lambda_sub=1.0, dynamic_sem_l2=False):
+        """
+        # input: `logits` and `labels` must have the same shape `[batch_size, num_classes]`
+        # output: A 1-D `Tensor` of length `batch_size` of the same type as `logits` with the softmax cross entropy loss.
+        # input_y:shape=(?, 1999); logits:shape=(?, 1999)
+        # let `x = logits`, `z = labels`.  The logistic loss is:z * -log(sigmoid(x)) + (1 - z) * -log(1 - sigmoid(x))
+        """
+        # Initialize binary cross-entropy with logits
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+        
+        # Compute BCE loss
+        losses = criterion(outputs, targets)  # shape: [batch_size, num_classes]
+        losses = torch.sum(losses, dim=1)     # Sum over classes for each sample
+        loss_ce = torch.mean(losses)          # Mean loss over the batch
+
+        # L2 Regularization
+        if dynamic_sem_l2:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name
+            )
+        else:
+            l2_losses = l2_lambda * sum(
+                torch.sum(param ** 2) for name, param in self.named_parameters() if 'bias' not in name and 'label_sub_mat' not in name
+            )
+        
+        # Sigmoid output for substitution calculations
+        sig_output = torch.sigmoid(outputs)  # shape: [batch_size, num_classes]
+        sub_loss = 0
+
+        # Loop over each instance in the batch for per-document substitution loss
+        for i in range(sig_output.size(0)):  # sig_output.size(0) is the batch size
+            logit_vector = sig_output[i]            # s_d, shape [num_classes]
+            label_vector = targets[i]               # y_d, shape [num_classes]
+            
+            # Get indices of true labels for this sample
+            label_index = torch.nonzero(label_vector, as_tuple=False).squeeze(1)
+            if len(label_index) < 2:
+                continue  # Skip if there are fewer than 2 true labels for this sample
+            
+            # Gather predicted values for true labels
+            s_d_true = logit_vector[label_index]    # shape: [num_true_labels]
+            
+            # Calculate R(s_dj) * (1 - R(s_dk))
+            pred_d_true = torch.round(s_d_true)
+            pair_sub_d = torch.mm(pred_d_true.view(-1, 1), (1 - pred_d_true).view(1, -1))  # shape: [num_true_labels, num_true_labels]
+
+            # Gather corresponding substitution values from the label substitution matrix
+            A, B = torch.meshgrid(label_index, label_index, indexing='ij')
+            label_sub_matrix_d = label_sub_matrix[A, B]  # shape: [num_true_labels, num_true_labels]
+            
+            # Accumulate the weighted substitution differences
+            sub_loss += torch.sum(label_sub_matrix_d * pair_sub_d)
+        
+        # Normalize substitution loss over batch and apply lambda scaling
+        sub_loss = (sub_loss / outputs.size(0)) * lambda_sub / 2.0
+
+        # Combine BCE loss, L2 regularization, and substitution loss
+        total_loss = loss_ce + l2_losses + sub_loss
+        return total_loss
