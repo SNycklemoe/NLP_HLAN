@@ -106,7 +106,7 @@ def evaluate_model(model, dataloader, calibration, device):
     model.eval()
     all_predictions = []
     all_targets = []
-
+    all_outputs = []
     with torch.no_grad():
         for batch in tqdm(dataloader):
         # for batch in dataloader:
@@ -119,9 +119,11 @@ def evaluate_model(model, dataloader, calibration, device):
                 inputs.detach().cpu()
                 targets.detach().cpu()
                 predictions.detach().cpu()
+                outputs.detach().cpu()
 
                 all_predictions.append(predictions)
                 all_targets.append(targets)
+                all_outputs.append(outputs)
 
                 del batch, inputs, outputs, predictions, targets
 
@@ -129,12 +131,13 @@ def evaluate_model(model, dataloader, calibration, device):
                     torch.cuda.empty_cache()
                     gc.collect()
 
-    all_predictions = torch.cat(all_predictions)
-    all_targets = torch.cat(all_targets)
-    micro_f1 = f1_score(all_targets.cpu().numpy(), all_predictions.cpu().numpy(), average='micro')
-    micro_auroc = roc_auc_score(all_targets, outputs.detach().cpu().numpy(), average='micro')
-    macro_f1 = f1_score(all_targets.cpu().numpy(), all_predictions.cpu().numpy(), average='macro')
-    macro_auroc = roc_auc_score(all_targets, outputs.detach().cpu().numpy(), average='macro')
+    all_predictions = torch.cat(all_predictions).cpu().numpy()
+    all_targets = torch.cat(all_targets).cpu().numpy()
+    all_outputs = torch.cat(all_outputs).cpu().numpy()
+    micro_f1 = f1_score(all_targets, all_predictions, average='micro')
+    micro_auroc = roc_auc_score(all_targets, all_outputs, average='micro')
+    macro_f1 = f1_score(all_targets, all_predictions, average='macro')
+    macro_auroc = roc_auc_score(all_targets, all_outputs, average='macro')
     # print(all_predictions)
     return micro_f1,macro_f1,micro_auroc,macro_auroc
 
