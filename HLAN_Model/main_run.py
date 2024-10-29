@@ -25,10 +25,10 @@ def seed_everything(seed=42):
     torch.backends.cudnn.benchmark = True
 
 
-word_model_path = ## Path to word-emb model
-code_model_path = ## Path to code-emb model
-x_path = ## Path to train_word-emb 
-y_path = ## Path to train_code-emb 
+word_model_path ='/u/l/j/ljin/private/cs769/Embeddings/word-emb_model_weights.pt' ## Path to word-emb model
+code_model_path ='/u/l/j/ljin/private/cs769/Embeddings/code-emb_model_weights.pt' ## Path to code-emb model
+x_path ='/u/l/j/ljin/private/cs769/Embeddings/train_word-emb.pt' ## Path to train_word-emb 
+y_path = '/u/l/j/ljin/private/cs769/Embeddings/train_code-emb.pt'## Path to train_code-emb 
 word_weight_tensor = torch.load(word_model_path, weights_only = True)
 code_weight_tensor = torch.load(code_model_path, weights_only=True)
 x = torch.load(x_path, weights_only = True)
@@ -50,12 +50,14 @@ l2 = 0.0001
 calibration = 0.5
 num_epochs = 100
 
+seed_everything()
 model = HLAN(num_sent = num_sent, word_weight_tensor=word_weight_tensor,code_weight_tensor=code_weight_tensor,embed_dim=embed_dim,hidden_size=hidden_size,dropout_prob=dropout_prob)
 model.to(device)
 
 loss_fn = nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr = lr, weight_decay = l2)
 def train_model(model, train_dataloader, dev_dataloader,optimizer, loss_fn, num_epochs, device):
+    seed_everything()
     train_loss = list()
     dev_micro_f1, dev_macro_f1, dev_micro_auroc,dev_macro_auroc = list(),list(),list(),list()
     for epoch in range(num_epochs):
