@@ -57,7 +57,7 @@ class HLAN(nn.Module):
         hidden_rep_step = self.attn_tanh(self.W_w(hidden_state_reshape))
         v = hidden_rep_step.reshape(-1, hidden_state.size(1),hidden_state.size(-1))
 
-        a_w_l = torch.matmul(v,self.V_w_l.T).view(-1,v.size(0),v.size(1))
+        a_w_l = torch.matmul(v,self.V_w_l.T).permute(2, 0, 1)
         a_w_l = self.word_softmax(a_w_l).unsqueeze(3)
         C_s_l = a_w_l*hidden_state
         C_s_l = torch.sum(C_s_l,dim = 2)
@@ -68,10 +68,12 @@ class HLAN(nn.Module):
         X_reshape = X.tranpose(0, 1)
         S_l, hnn = self.gru_s(X_reshape)
 
-        hidden_rep_step = self.attn_tanh(self.W_s(S_l)) 
-        U = hidden_rep_step.reshape(hidden_rep_step.size(1), -1, self.num_sent, hidden_rep_step.size(-1))
+        hidden_rep_step = self.attn_tanh(self.W_s(S_l))
+        hidden_rep_reshape = hidden_rep_step.view(-1, self.num_sent, hidden_rep_step.size(1), hidden_rep_step.size(2))
+        U = hidden_rep_reshape.permute(2, 0, 1, 3)
 
-        S_l_reshape = S_l.reshape(S_l.size(1), -1, self.num_sent, S_l.size(2))
+        S_l_reshape = S_l.view(-1, self.num_sent, S_l.size(1), S_l.size(2))
+        S_l_reshape = S_l_reshape.permute(2, 0, 1, 3)
         V_s_l_expand = self.V_s_l.unsqueeze(1).unsqueeze(1)
         attention_logits = (U * V_s_l_expand).sum(dim=3)
         p_attention_sent = self.sentence_softmax(attention_logits - attention_logits.max(dim=2, keepdim=True).values)
