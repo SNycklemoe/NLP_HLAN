@@ -4,17 +4,24 @@ import numpy as np
 # import torch.nn.functional as F
 
 class HLAN(nn.Module):
-    def __init__(self, num_sent, word_weight_tensor, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True):
+    def __init__(self, num_sent, word_weight_tensor, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True, random_word_embedding=False, use_label_embeddings=True, num_classes=50):
         super(HLAN, self).__init__()
         self.num_sent = num_sent
         self.embed_dim = embed_dim
         self.hidden_size = hidden_size
         self.dropout_prob = dropout_prob
+        self.use_label_embeddings = use_label_embeddings
+        self.num_classes = num_classes
 
-        if freeze_embed == True:
-            self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor, freeze = True)
+        # if freeze_embed == True:
+        #     self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor, freeze = True)
+        # else:
+        #     self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor)
+
+        if random_word_embedding:
+            self.embed_layer = nn.Embedding(num_embeddings=word_weight_tensor.size(0), embedding_dim=embed_dim)
         else:
-            self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor)
+            self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor, freeze=freeze_embed)
 
         self.gru_w = nn.GRU(input_size = embed_dim, hidden_size = hidden_size, bidirectional=True, batch_first=True)
         self.W_w = nn.Linear(hidden_size*2, hidden_size*2)
@@ -28,11 +35,18 @@ class HLAN(nn.Module):
         self.drop_layer = nn.Dropout(p = dropout_prob)
         self.sentence_softmax = nn.Softmax(dim =2)
 
-        if freeze_embed == True:
-            self.W_projection = nn.Parameter(code_weight_tensor, requires_grad = False)
+        # if freeze_embed == True:
+        #     self.W_projection = nn.Parameter(code_weight_tensor, requires_grad = False)
         
+        # else:
+        #     self.W_projections = nn.Parameter(code_weight_tensor)
+
+        if self.use_label_embeddings:
+            self.W_projection = nn.Parameter(code_weight_tensor, requires_grad=not freeze_embed)
         else:
-            self.W_projections = nn.Parameter(code_weight_tensor)
+            # Initialize with Xavier (Glorot) uniform as in TensorFlow’s default initializer
+            self.W_projection = nn.Parameter(torch.empty(hidden_size * 4, num_classes))
+            nn.init.xavier_uniform_(self.W_projection)
 
         self.sigmoid_act = nn.Sigmoid()
 
