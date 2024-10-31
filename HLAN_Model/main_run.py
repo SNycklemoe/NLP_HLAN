@@ -132,9 +132,9 @@ def main(args):
         scenario += '_use_label_emb_'
     if freeze_emb:
         scenario += '_freeze_label_emb'
-
+    # print(scenario)
     word_model_path ='word-emb_model_weights.pt' ## Path to word-emb model
-    code_model_path ='Embeddings/code-emb_model_weights.pt' ## Path to code-emb model
+    code_model_path ='code-emb_model_weights.pt' ## Path to code-emb model
     train_x_path ='train_word-emb.pt' ## Path to train_word-emb 
     train_y_path = 'train_code-emb.pt'## Path to train_code-emb 
     word_weight_tensor = torch.load(word_model_path, weights_only = True)
