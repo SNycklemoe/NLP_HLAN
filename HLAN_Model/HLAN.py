@@ -19,7 +19,7 @@ class HLAN(nn.Module):
         #     self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor)
 
         if random_word_embedding:
-            self.embed_layer = nn.Embedding(num_embeddings=word_weight_tensor.size(0), embedding_dim=embed_dim)
+            self.embed_layer = nn.Embedding(num_embeddings=word_weight_tensor.size(0), embedding_dim=embed_dim, padding_idx = 0)
         else:
             self.embed_layer = nn.Embedding.from_pretrained(word_weight_tensor, freeze=freeze_embed)
 
@@ -79,7 +79,7 @@ class HLAN(nn.Module):
         return C_s_l
 
     def sentence_attention(self, X):
-        X_reshape = X.tranpose(0, 1)
+        X_reshape = X.transpose(0, 1)
         S_l, hnn = self.gru_s(X_reshape)
 
         hidden_rep_step = self.attn_tanh(self.W_s(S_l))
