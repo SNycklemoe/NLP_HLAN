@@ -45,7 +45,7 @@ class HLAN(nn.Module):
             self.W_projection = nn.Parameter(code_weight_tensor, requires_grad=not freeze_embed)
         else:
             # Initialize with Xavier (Glorot) uniform as in TensorFlow’s default initializer
-            self.W_projection = nn.Parameter(torch.empty(hidden_size * 4, num_classes))
+            self.W_projection = nn.Parameter(torch.empty(num_classes,hidden_size * 4))
             nn.init.xavier_uniform_(self.W_projection)
 
         self.sigmoid_act = nn.Sigmoid()
