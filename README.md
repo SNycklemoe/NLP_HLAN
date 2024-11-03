@@ -5,7 +5,7 @@ This GitHub Repository houses the coding pipeline to re-implement the "Explainab
 ## Folder Structure:
 ### Data
 - Training_results: Model training results for multiple epochs across training, validation and test sets
-- notebooks: Notebooks for data pre-processing sourced from the CAML github (https://github.com/jamesmullenbach/caml-mimic/tree/master). The CAML code was utilized in the original HLAN model paper for pre-processing the data, so we replicated this process using the available CAML code.
+- notebooks: Notebooks for data pre-processing sourced from the CAML github [CAML](https://github.com/jamesmullenbach/caml-mimic/tree/master). The CAML code was utilized in the original HLAN model paper for pre-processing the data, so we replicated this process using the available CAML code.
 - processed_50: Outlying folder path for pre-processed MIMIC-III data (removed)
 ### Embeddings
 - pre-train_embeddings.py: Code to pre-train the word and label CBoW models
