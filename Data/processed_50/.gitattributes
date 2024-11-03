@@ -1,2 +1,0 @@
-disch_full.csv.gz filter=lfs diff=lfs merge=lfs -text
-train_full.csv.gz filter=lfs diff=lfs merge=lfs -text
