@@ -71,3 +71,64 @@ def pad_out_notes(doc_rep, sent_len, num_sent):
     padded_doc_rep_tensor = torch.stack(padded_doc_rep)
 
     return padded_doc_rep_tensor
+
+
+def split_note_chunks(text, window_size):
+    note = text.split(' ')
+    sentences = []
+    for j in range(0, len(note), window_size):
+        sentence = ' '.join(note[j:j+window_size])
+        sentences.append(sentence)
+    return sentences
+
+def tokenize_bert_and_pad(input_text = None, sent_len = None, num_sent = None, tokenizer = None, max_length_tokens = None):
+    doc_rep = []
+    n_notes = len(input_text)
+
+    for i in range(n_notes):
+        text = input_text.iloc[i]
+        sentences = split_note_chunks(text, window_size = sent_len)
+        doc_rep.append(sentences)
+    
+    token_list = []
+    attn_mask_list = []
+
+    for note in doc_rep:
+        tokens = []
+        masks = []
+        for sentences in note:
+            encoding = tokenizer(sentences, padding = 'max_length', max_length = max_length_tokens, truncation = True, return_tensors = 'pt')
+            input_ids = encoding['input_ids']
+            attention_mask = encoding['attention_mask']
+            tokens.append(input_ids)
+            masks.append(attention_mask)
+        tokens = torch.cat(tokens, dim = 0)
+        masks = torch.cat(masks, dim = 0)
+        token_list.append(tokens)
+        attn_mask_list.append(masks)
+
+    token_padded = []
+    for note in token_list:
+        if note.shape[0] > num_sent:
+            token_padded.append(note[:num_sent,:])
+        elif note.shape[0] == num_sent:
+            token_padded.append(note)
+        else:
+            pad_dim = num_sent - note.shape[0]
+            padded_note = F.pad(note,(0, 0, 0, pad_dim))
+            token_padded.append(padded_note)
+    mask_padded = []
+    for note in attn_mask_list:
+        if note.shape[0] > num_sent:
+            mask_padded.append(note[:num_sent,:])
+        elif note.shape[0] == num_sent:
+            mask_padded.append(note)
+        else:
+            pad_dim = num_sent - note.shape[0]
+            padded_note = F.pad(note,(0, 0, 0, pad_dim))
+            mask_padded.append(padded_note)
+    
+    token_tensor = torch.stack(token_padded)
+    attn_mask_tensor = torch.stack(mask_padded)
+
+    return token_tensor, attn_mask_tensor
