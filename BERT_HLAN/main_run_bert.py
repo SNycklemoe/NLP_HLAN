@@ -188,7 +188,7 @@ def main(args):
     np.save(subset+'_macro_f1_'+str(num_epochs)+scenario+'_'+str(lr)+'.npy',eval_macro_f1)
     np.save(subset+'_micro_auroc_'+str(num_epochs)+scenario+'_'+str(lr)+'.npy',eval_micro_auroc)
     np.save(subset+'_macro_auroc_'+str(num_epochs)+scenario+'_'+str(lr)+'.npy',eval_macro_auroc)
-    torch.save(model.state_dict(), 'HLAN_'+str(num_epochs)+scenario+'_'+str(lr)+'pt')
+    torch.save(model.state_dict(), 'HLAN_'+str(num_epochs)+scenario+'_'+str(lr)+'.pt')
 
 
 if __name__ == '__main__':
