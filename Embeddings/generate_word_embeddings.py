@@ -30,8 +30,8 @@ print("Number of test notes:",len(test_df))
 model = Word2Vec.load(word_model_path)
 
 ### Set up key pieces
-num_sent = 25
-sent_len = 100
+num_sent = 100
+sent_len = 25
 max_len = 2500
 
 dim = 100
