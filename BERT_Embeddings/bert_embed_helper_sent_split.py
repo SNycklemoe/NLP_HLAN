@@ -82,7 +82,7 @@ def split_note_chunks(text, window_size):
     #     sentences.append(sentence)
     # return sentences
     separator_pattern=r"\|\|+"
-    short_sentence_threshold = 20
+    short_sentence_threshold = 10
 
     sentences = re.split(separator_pattern, text)
     processed_sentences = []
@@ -100,7 +100,7 @@ def split_note_chunks(text, window_size):
                 prev_sentence = processed_sentences[-1]
                 prev_words = re.split(r'\s+', prev_sentence)
 
-                if len(prev_words) + len(words) <= window_size+short_sentence_threshold:
+                if len(prev_words) + len(words) <= window_size:
                     # Append short sentence to the previous sentence
                     processed_sentences[-1] += " " + sentence
                 else:
@@ -113,7 +113,7 @@ def split_note_chunks(text, window_size):
             # If there is a temp_sentence (short sentence before), append it first
             if temp_sentence:
                 temp_words = re.split(r'\s+', temp_sentence.strip())
-                if len(temp_words) + len(words) <= window_size+short_sentence_threshold:
+                if len(temp_words) + len(words) <= window_size:
                     # Append temp_sentence to the current long sentence
                     sentence = temp_sentence.strip() + " " + sentence
                 else:
@@ -130,7 +130,7 @@ def split_note_chunks(text, window_size):
             prev_words = re.split(r'\s+', prev_sentence)
             temp_words = re.split(r'\s+', temp_sentence.strip())
 
-            if len(prev_words) + len(temp_words) <= window_size+short_sentence_threshold:
+            if len(prev_words) + len(temp_words) <= window_size:
                 processed_sentences[-1] += " " + temp_sentence.strip()
             else:
                 processed_sentences.append(temp_sentence.strip())
