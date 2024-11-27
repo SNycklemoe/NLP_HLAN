@@ -1,0 +1,192 @@
+from transformers import AutoModel, AutoTokenizer
+import torch
+import numpy as np
+import pandas as pd
+import torch.nn.functional as F
+import re
+
+### Define function to get BERT embeddings for each word in a note
+def get_bert_embeddings(input_text = None, sent_len = None, tokenizer = None, max_length_tokens = None, model = None, device = None):
+    doc_rep = []
+    n_notes = len(input_text)
+
+    ### Loop over all of the notes
+    for i in range(n_notes):
+        ### split note based on space
+        note = input_text.iloc[i].split(' ')
+        note_len = len(note)
+        embedding = []
+
+        ### Loop over the words in the note, based on 100 word batches
+        for j in range(0, note_len, sent_len):
+            batch = note[j:j+sent_len]
+
+            ### Get tokens for each batch, truncate based on token splits larger than max length of tokens
+            encoding = tokenizer.batch_encode_plus(batch, padding = 'max_length', max_length = max_length_tokens, truncation = True,
+                                                   return_tensors = 'pt', add_special_tokens = False, return_attention_mask = True)
+            attention_mask = encoding['attention_mask'].to(device)
+
+            ### Get BERT representation based on last hidden state
+            with torch.no_grad():
+                bert_outputs = model(**encoding.to(device))
+                last_hidden = bert_outputs.last_hidden_state
+
+            ### Get mean of BERT embeddings based on token splits. Need to account for padding based on max_length, so use attention mask
+            masked_embed = last_hidden * attention_mask.unsqueeze(-1)
+            non_padding = attention_mask.sum(dim = 1).unsqueeze(-1)
+            embed_sum = masked_embed.sum(dim = 1)
+            embed_mean = embed_sum / non_padding
+
+            embedding.append(embed_mean.detach().cpu())
+        doc_rep.append(embedding)
+    return doc_rep
+
+### Define function to pad notes from BERT embeddings to be [num_notes, num_sentences, num_words, embed_dim]
+def pad_out_notes(doc_rep, sent_len, num_sent):
+    padded_doc_rep = []
+    n_notes = len(doc_rep)
+
+    ### Loop over all notes
+    for i in range(n_notes):
+        note = doc_rep[i]
+        note_len = len(note)
+        loop_rep = []
+
+        ### Loop over all sentences in the notes
+        for j in range(note_len):
+            sent_rep = note[j]
+            ### If sentence is not as long as sentence length, pad with 0s
+            if sent_rep.shape[0] != sent_len:
+                padded_note = F.pad(sent_rep, pad = (0, 0, 0, sent_len - sent_rep.shape[0]))
+                loop_rep.append(padded_note)
+            else:
+                loop_rep.append(sent_rep)
+        
+        ### For note, add additional sentences with 0s to ensure there are 25 sentences
+        for k in range(num_sent - note_len):
+            loop_rep.append(torch.zeros(sent_len, 768))
+
+        loop_rep = torch.stack(loop_rep)
+        padded_doc_rep.append(loop_rep)
+    ### Stack appended notes to ensure tensor is returned
+    padded_doc_rep_tensor = torch.stack(padded_doc_rep)
+
+    return padded_doc_rep_tensor
+
+
+def split_note_chunks(text, window_size):
+    # note = text.split(' ')
+    # sentences = []
+    # for j in range(0, len(note), window_size):
+    #     sentence = ' '.join(note[j:j+window_size])
+    #     sentences.append(sentence)
+    # return sentences
+    separator_pattern=r"\|\|+"
+    short_sentence_threshold = 20
+
+    sentences = re.split(separator_pattern, text)
+    processed_sentences = []
+
+    # Combine short sentences
+    temp_sentence = ""
+
+    for i, sentence in enumerate(sentences):
+        sentence = sentence.strip()
+        words = re.split(r'\s+', sentence)
+
+        if len(words) < short_sentence_threshold:
+            # Combine with the previous sentence if it doesn't exceed window_size
+            if processed_sentences:
+                prev_sentence = processed_sentences[-1]
+                prev_words = re.split(r'\s+', prev_sentence)
+
+                if len(prev_words) + len(words) <= window_size+short_sentence_threshold:
+                    # Append short sentence to the previous sentence
+                    processed_sentences[-1] += " " + sentence
+                else:
+                    # Start a new sentence if adding exceeds the window_size
+                    processed_sentences.append(sentence)
+            else:
+                # If no previous sentence, accumulate it in temp_sentence
+                temp_sentence += " " + sentence
+        else:
+            # If there is a temp_sentence (short sentence before), append it first
+            if temp_sentence:
+                temp_words = re.split(r'\s+', temp_sentence.strip())
+                if len(temp_words) + len(words) <= window_size+short_sentence_threshold:
+                    # Append temp_sentence to the current long sentence
+                    sentence = temp_sentence.strip() + " " + sentence
+                else:
+                    # Add temp_sentence as its own sentence
+                    processed_sentences.append(temp_sentence.strip())
+                temp_sentence = ""
+            # Add the current long sentence
+            processed_sentences.append(sentence)
+
+    # Append any remaining temp_sentence to the last processed sentence
+    if temp_sentence:
+        if processed_sentences:
+            prev_sentence = processed_sentences[-1]
+            prev_words = re.split(r'\s+', prev_sentence)
+            temp_words = re.split(r'\s+', temp_sentence.strip())
+
+            if len(prev_words) + len(temp_words) <= window_size+short_sentence_threshold:
+                processed_sentences[-1] += " " + temp_sentence.strip()
+            else:
+                processed_sentences.append(temp_sentence.strip())
+        else:
+            processed_sentences.append(temp_sentence.strip())
+
+    return processed_sentences
+
+def tokenize_bert_and_pad(input_text = None, sent_len = None, num_sent = None, tokenizer = None, max_length_tokens = None):
+    doc_rep = []
+    n_notes = len(input_text)
+
+    for i in range(n_notes):
+        text = input_text.iloc[i]
+        sentences = split_note_chunks(text, window_size = sent_len)
+        doc_rep.append(sentences[:num_sent])  # Limit to num_sent sentences
+    
+    token_list = []
+    attn_mask_list = []
+
+    for note in doc_rep:
+        tokens = []
+        masks = []
+        for sentences in note:
+            encoding = tokenizer(sentences, padding = 'max_length', max_length = max_length_tokens, truncation = True, return_tensors = 'pt')
+            input_ids = encoding['input_ids']
+            attention_mask = encoding['attention_mask']
+            tokens.append(input_ids)
+            masks.append(attention_mask)
+        tokens = torch.cat(tokens, dim = 0)
+        masks = torch.cat(masks, dim = 0)
+        token_list.append(tokens)
+        attn_mask_list.append(masks)
+
+    token_padded = []
+    for note in token_list:
+        if note.shape[0] > num_sent:
+            token_padded.append(note[:num_sent,:])
+        elif note.shape[0] == num_sent:
+            token_padded.append(note)
+        else:
+            pad_dim = num_sent - note.shape[0]
+            padded_note = F.pad(note,(0, 0, 0, pad_dim))
+            token_padded.append(padded_note)
+    mask_padded = []
+    for note in attn_mask_list:
+        if note.shape[0] > num_sent:
+            mask_padded.append(note[:num_sent,:])
+        elif note.shape[0] == num_sent:
+            mask_padded.append(note)
+        else:
+            pad_dim = num_sent - note.shape[0]
+            padded_note = F.pad(note,(0, 0, 0, pad_dim))
+            mask_padded.append(padded_note)
+    
+    token_tensor = torch.stack(token_padded)
+    attn_mask_tensor = torch.stack(mask_padded)
+
+    return token_tensor, attn_mask_tensor
