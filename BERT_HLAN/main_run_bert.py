@@ -9,6 +9,7 @@ from sklearn.metrics import f1_score,roc_auc_score
 import gc
 import random
 import os
+os.environ['TRANSFORMERS_CACHE'] = './cache/'
 from BERT_HLAN import BERT_HLAN
 from transformers import AutoModel, AutoTokenizer
 import torch.nn.functional as F
@@ -130,32 +131,54 @@ def main(args):
     use_label_embeddings = args.use_label
     freeze_emb = args.freeze_emb
     bert_emb = args.bert_emb
-    scenario = ''
+    reduced_dim = args.reduced_dim
+    dimension_reduction = args.dimension_reduction
+    sentence_split = args.sentence_split
+    subset = args.subset
+    scenario = bert_emb
     # print(scenario)
     if use_label_embeddings == 'Yes':
         use_label_embeddings = True
-        scenario += '_use_label_emb'
+        scenario += '_LE_True'
     else:
         use_label_embeddings = False
+        scenario += '_LE_False'
     if freeze_emb == 'Yes':
         freeze_emb = True
-        scenario += '_freeze_label_emb'
+        scenario += '_FLE_True'
     else:
         freeze_emb = False
-    scenario += '_'+bert_emb
+        scenario += '_FLE_False'
+
+    if sentence_split == 'Yes':
+        sentence_split = True
+        scenario += '_SS_True'
+    else:
+        sentence_split = False
+        scenario += '_SS_False'
+    
+    if dimension_reduction == 'Yes':
+        dimension_reduction = True
+        scenario += '_DM_True'
+    else:
+        dimension_reduction = False
+        scenario += '_DM_False'
+
     print(scenario)
+
     code_model_path ='code-emb_model_weights.pt' ## Path to code-emb model
-    train_x_path ='train_tok_bert_embed_bluebert.pt' ## Path to train_tok_bert_embed
-    train_x_mask_path = 'train_mask_bert_embed_bluebert.pt' ## Path to train_mask_bert_embed
+    train_x_path ='train_tok_bert_embed_'+bert_emb+'.pt' ## Path to train_tok_bert_embed
+    train_x_mask_path = 'train_mask_bert_embed_'+bert_emb+'.pt' ## Path to train_mask_bert_embed
     train_y_path = 'train_code-emb.pt'## Path to train_code-emb )
+    eval_x_path = subset+'_tok_bert_embed_'+bert_emb+'.pt' ## Path to dev_tok_bert_embed
+    eval_x_mask_path = subset+'_mask_bert_embed_'+bert_emb+'.pt' ## Path to dev_mask_bert_embed
+    eval_y_path = subset+'_code-emb.pt'## Path to dev_code-emb 
+    
     code_weight_tensor = torch.load(code_model_path, weights_only=True)
     train_x = torch.load(train_x_path, weights_only = True)
     train_x_mask = torch.load(train_x_mask_path, weights_only = True)
     train_y = torch.load(train_y_path, weights_only = True).float()
-    subset = args.subset
-    eval_x_path = subset+'_tok_bert_embed_bluebert.pt' ## Path to dev_tok_bert_embed
-    eval_x_mask_path = subset+'_mask_bert_embed_bluebert.pt' ## Path to dev_mask_bert_embed
-    eval_y_path = subset+'_code-emb.pt'## Path to dev_code-emb 
+    
     eval_x = torch.load(eval_x_path, weights_only = True)
     eval_x_mask = torch.load(eval_x_mask_path, weights_only = True)
     eval_y = torch.load(eval_y_path, weights_only = True).float()
@@ -171,8 +194,9 @@ def main(args):
     print("Using device:", device)
     seed_everything()
     model = BERT_HLAN(num_sent = num_sent, bert_model = bert_model, code_weight_tensor=code_weight_tensor, 
-                      embed_dim=embed_dim, hidden_size=hidden_size, dropout_prob=dropout_prob,
-                      use_label_embeddings = use_label_embeddings, freeze_embed = freeze_emb)
+                      embed_dim=embed_dim, hidden_size=hidden_size,reduced_dim = reduced_dim, dropout_prob=dropout_prob,
+                      use_label_embeddings = use_label_embeddings, freeze_embed = freeze_emb,
+                      dimension_reduction=dimension_reduction)
     model.to(device)
     loss_fn = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr = lr, weight_decay = l2)
@@ -232,6 +256,15 @@ if __name__ == '__main__':
     parser.add_argument('--bert_emb',
                         default = 'bluebert',
                         type = str)
+    parser.add_argument('--sentence_split',
+                        default = 'False',
+                        type = str)
+    parser.add_argument('--dimension_reduction',
+                        default = 'False',
+                        type = str)
+    parser.add_argument('--reduced_dim',
+                        default = 100,
+                        type = int)
 
     main(parser.parse_args())
 

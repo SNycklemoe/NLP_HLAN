@@ -4,21 +4,30 @@ import numpy as np
 # import torch.nn.functional as F
 
 class BERT_HLAN(nn.Module):
-    def __init__(self, num_sent, bert_model, code_weight_tensor, embed_dim, hidden_size,dropout_prob,freeze_embed = True, use_label_embeddings=True, num_classes=50):
+    def __init__(self, num_sent, bert_model, code_weight_tensor, embed_dim, hidden_size,dropout_prob,
+                 freeze_embed = True, use_label_embeddings=True, dimension_reduction = False,reduced_dim = 100,num_classes=50):
         super(BERT_HLAN, self).__init__()
         self.num_sent = num_sent
         self.embed_dim = embed_dim
         self.hidden_size = hidden_size
         self.dropout_prob = dropout_prob
         self.use_label_embeddings = use_label_embeddings
+        self.reduced_dim = reduced_dim
+        self.dimension_reduction = dimension_reduction
         self.num_classes = num_classes
         self.bert_model = bert_model
 
         if freeze_embed:
             for param in self.bert_model.parameters():
                 param.requires_grad = False
+        
+        if dimension_reduction:
+            self.linear = nn.Linear(in_features = embed_dim, out_features = reduced_dim)
+            self.gru_w = nn.GRU(input_size = reduced_dim, hidden_size = hidden_size, bidirectional=True, batch_first=True)
+        
+        else:
+            self.gru_w = nn.GRU(input_size = embed_dim, hidden_size = hidden_size, bidirectional=True, batch_first=True)
 
-        self.gru_w = nn.GRU(input_size = embed_dim, hidden_size = hidden_size, bidirectional=True, batch_first=True)
         self.W_w = nn.Linear(hidden_size*2, hidden_size*2)
         self.attn_tanh = nn.Tanh()
         self.V_w_l = nn.Parameter(torch.randn(50, hidden_size*2))
@@ -45,7 +54,9 @@ class BERT_HLAN(nn.Module):
         
         embed_comp = self.bert_model(input_ids = input_ids, attention_mask = attention_mask)
         last_hidden_state = embed_comp.last_hidden_state
-
+        if self.dimension_reduction:
+            last_hidden_state = self.linear(last_hidden_state)
+        
         C_s_l = self.word_attention(last_hidden_state)
 
         doc_rep = self.sentence_attention(C_s_l)
