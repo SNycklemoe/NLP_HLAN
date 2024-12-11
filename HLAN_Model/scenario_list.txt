@@ -1,0 +1,8 @@
+Yes,Yes,No,10
+Yes,Yes,Yes,48
+Yes,No,No,17
+No,Yes,No,27
+No,Yes,Yes,48
+No,No,Yes,48
+No,No,No,32
+Yes,No,Yes,48
