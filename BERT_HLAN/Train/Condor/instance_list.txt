@@ -1,0 +1,5 @@
+bluebert,Yes,Yes,No,No,15
+roberta,Yes,Yes,No,No,14
+roberta,Yes,Yes,No,Yes,9
+bioclinical,Yes,Yes,No,Yes,19
+bluebert,Yes,Yes,No,Yes,17

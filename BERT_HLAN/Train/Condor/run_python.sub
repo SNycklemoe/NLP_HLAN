@@ -1,0 +1,46 @@
+
+# Submit file 
+
+# Must set the universe to Docker
+universe = docker
+docker_image = leojin727/berthlan:latest
+
+
+# set the log, error and output files 
+log = run_record/log/berthlan$(bert_emb)$(use_label)$(freeze_emb)$(sentence_split)$(dimension_reduction).log
+error = run_record/err/berthlan$(bert_emb)$(use_label)$(freeze_emb)$(sentence_split)$(dimension_reduction).err
+output = run_record/out/berthlan$(bert_emb)$(use_label)$(freeze_emb)$(sentence_split)$(dimension_reduction).out
+
+# set the executable to run
+executable = run_python.sh
+arguments = $(bert_emb) $(use_label) $(freeze_emb) $(sentence_split) $(dimension_reduction) $(train_epoch)
+
+# take our python script to the compute node
+# the script and data are shared by multiple examples and located in a
+# different directory
+transfer_input_files = /home/jin263/NLP_HLAN/BERT_HLAN/BERT_HLAN.py,/home/jin263/NLP_HLAN/BERT_HLAN/main_run_bert.py,/home/jin263/NLP_HLAN/Embeddings/train_code-emb.pt,/home/jin263/NLP_HLAN/Embeddings/$(sentence_split)_SS/train_tok_bert_embed_$(bert_emb).pt,/home/jin263/NLP_HLAN/Embeddings/$(sentence_split)_SS/train_mask_bert_embed_$(bert_emb).pt,/home/jin263/NLP_HLAN/Embeddings/$(sentence_split)_SS/test_tok_bert_embed_$(bert_emb).pt,/home/jin263/NLP_HLAN/Embeddings/$(sentence_split)_SS/test_mask_bert_embed_$(bert_emb).pt,/home/jin263/NLP_HLAN/Embeddings/test_code-emb.pt,/home/jin263/NLP_HLAN/Embeddings/code-emb_model_weights.pt
+
+
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+
+# We require a machine with a compatible version of the CUDA driver
+require_gpus = (DriverVersion >= 10.1)
+
+# We must request 1 CPU in addition to 1 GPU
+request_cpus = 1
+request_gpus = 1
+
+# select some memory and disk space
+request_memory = 64GB
+request_disk = 20GB
+
+# Opt in to using CHTC GPU Lab resources
++WantGPULab = true
+# Specify short job type to run more GPUs in parallel
+# Can also request "medium" or "long"
++GPUJobLength = "short"
+
+# Tell HTCondor to run 1 instances of our job:
+queue bert_emb,use_label,freeze_emb,sentence_split, dimension_reduction,train_epoch from instance_list.txt
